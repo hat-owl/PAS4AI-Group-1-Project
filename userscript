@@ -1,0 +1,109 @@
+// ==UserScript==
+// @name         Add Alt Text to Images
+// @namespace    http://tampermonkey.net/
+// @version      0.1
+// @description  Adds an alt attribute to all images that don't have one
+// @author       Rory Hackney, Katherine Applegate, Dahlia Claire, Jasmine David
+// @match        *://*/*
+// @grant        none
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    async function callOpenAIResponse(system, image_url, log_params, model="gpt-4o") {
+        const url = "https://pas4ai.rorytm.com:8001/proxy/openai";
+        const body = {
+            "max_tokens": 300,
+            "stream": false,
+            "model": model,
+            "temperature": 1,
+            "presence_penalty": 0,
+            "top_p": 1,
+            "frequency_penalty": 0,
+            "messages": [{
+                "role": "system",
+                "content": system,
+            },{
+                "role": "user",
+                "content": [
+                    {
+                      "type": "image_url",
+                      "image_url": {
+                        "url": image_url
+                      },
+                    }
+                  ],
+            }],
+            "log_params": log_params
+        };
+
+        const headers = {"Authorization":"Bearer totally_secure_demo_key", // Replace with your actual proxy key
+            "Content-Type": "application/json"
+        };
+
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify(body)
+            });
+
+            const responseData = await response.json();
+            return responseData.choices[0].message.content;
+        } catch (error) {
+            console.error('Error calling API:', error);
+        }
+    }
+
+    async function isGood(altText, imageUrl) {
+        let type = await callOpenAIResponse("Categorize the type of the image as one of: Chart or graph, Comic, Illustration, Photograph, Text, Logo, Decorative. Include only the type. Do not include 'Type:' or whitespace.", imageUrl);
+        let good = "A good alt text is concise, accurate, clear, brief, short, simple, and focuses on the main subject. Is this a good alt text for the given image? ".concat(altText);
+        if (type) {
+            //console.log("Type:", type);
+            if (type == "Comic") {
+                good = "A good alt text is accurate, concise, simple, short, a similar experience to viewing the image, and descriptive. Is this a good alt text for the given comic?";
+            } else if (type == "Text") {
+                good = "A good alt text accurately transcribes the text and provides no other info. Is this a good alt text for the given image?";
+            } else if (type === "chart" || type === "graph") {
+                good = "A good alt text includes the chart or graph type and describes the content of the chart or graph. Is this a good alt text for the given chart or graph?";
+            } else if (type === "illustration") {
+                good = "A good alt text describes the main elements and purpose of the illustration, including its artistic style if relevant. Is this a good alt text for the given illustration?";
+            } else if (type === "photograph") {
+                good = "A good alt text describes the scene or subject of the photograph clearly and concisely and mentions any notable details. Is this a good alt text for the given photograph?";
+            } else if (type === "logo") {
+                good = "A good alt text identifies the brand or entity represented by the logo. Is this a good alt text for the given logo?";
+            }
+        }
+        //console.log(await callOpenAIResponse(good, imageUrl));
+        good += "Answer 'Yes' or 'No'. Alt Text: '";
+        return (await callOpenAIResponse(good + altText + "'", imageUrl));
+    }
+
+    async function processImages() {
+        const images = document.querySelectorAll('img');
+
+        for (let img of images) {
+            let grade = "";
+            //grade the current alt
+            if (img.hasAttribute("alt")) {
+                grade = isGood(img.alt, img.url);
+                console.log("Grade: " + grade);
+            }
+            //if the current alt sucks or there's no alt, replace it
+            if (!img.hasAttribute('alt') || grade != "Yes") {
+                const systemMessage = "Describe this image and its context to someone who is blind or has low vision. Keep it to 1 sentence if possible. State if it is a logo, comic, illustration, painting, or cartoon. If applicable, identify if it is a brand or well-known and specify what it is. Use simple language and avoid jargon. Please begin the sentence with the format ALT ID:";
+                const imageUrl = img.src;
+              //  const logParams = {};  // Add your log_params if any
+                const altText = await callOpenAIResponse(systemMessage, imageUrl);
+                if (altText) {
+                    let result = isGood(altText, imageUrl);
+                    img.setAttribute('alt', altText);
+                } else {
+                    img.setAttribute('alt', 'Description not available');
+                }
+            }
+        }
+    }
+    processImages();
+})();
